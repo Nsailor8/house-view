@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1f2937">
+  <title>Our House</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar on wide screens, bottom tab bar on phones -->
+    <nav class="sidebar" aria-label="Pages">
+      <div class="brand" id="brand">Our House</div>
+      <a href="#overview" data-page="overview"><span class="ic">🏠</span><span>Overview</span></a>
+      <a href="#rooms" data-page="rooms"><span class="ic">🌡️</span><span>Rooms</span></a>
+      <a href="#tanks" data-page="tanks"><span class="ic">💧</span><span>Tanks</span></a>
+      <a href="#weather" data-page="weather" hidden><span class="ic">⛅</span><span>Weather &amp; A/C</span></a>
+      <a href="#network" data-page="network" hidden><span class="ic">📶</span><span>Network</span></a>
+      <a href="#data" data-page="data"><span class="ic">📈</span><span>Data</span></a>
+      <div class="side-status"><span id="dot" class="dot"></span><span id="status-text">Connecting…</span></div>
+    </nav>
+
+    <div class="content">
+      <header>
+        <h1 id="page-title">Overview</h1>
+        <div class="status mobile-only"><span id="dot2" class="dot"></span></div>
+      </header>
+
+      <main>
+        <!-- Storm-prep banner: shown on every page when rain is likely and a tank is getting full -->
+        <div id="alert" class="storm-alert" hidden></div>
+
+        <!-- ============ Overview ============ -->
+        <section class="page" data-page="overview">
+          <div class="summary">
+            <a class="card sum" href="#rooms">
+              <h2>Inside</h2>
+              <div id="sum-floors" class="sum-rows"></div>
+            </a>
+            <a class="card sum" href="#tanks">
+              <h2>Water tanks</h2>
+              <div id="sum-tanks" class="sum-rows"></div>
+            </a>
+            <a class="card sum" href="#weather" id="sum-weather-card" hidden>
+              <h2>Weather</h2>
+              <div id="sum-weather" class="sum-rows"></div>
+            </a>
+            <a class="card sum" href="#weather" id="sum-ac-card" hidden>
+              <h2>A/C</h2>
+              <div id="sum-ac" class="sum-rows"></div>
+            </a>
+            <a class="card sum" href="#network" id="sum-net-card" hidden>
+              <h2>Wi-Fi</h2>
+              <div id="sum-net" class="sum-rows"></div>
+            </a>
+          </div>
+        </section>
+
+        <!-- ============ Rooms (Govees) ============ -->
+        <section class="page" data-page="rooms" hidden>
+          <div class="card">
+            <div class="house">
+              <div class="roof"></div>
+              <div id="floors"></div>
+            </div>
+            <div class="legend">
+              <span><i class="t-cold"></i>Cold</span>
+              <span><i class="t-ok"></i>Comfortable</span>
+              <span><i class="t-warm"></i>Warm</span>
+              <span><i class="t-hot"></i>Hot</span>
+            </div>
+            <p id="air-legend" class="legend air-legend" hidden>
+              Air quality: <span><b class="aq good"></b>Good</span>
+              <span><b class="aq fair"></b>Fair</span>
+              <span><b class="aq poor"></b>Poor</span>
+            </p>
+          </div>
+        </section>
+
+        <!-- ============ Tanks ============ -->
+        <section class="page" data-page="tanks" hidden>
+          <div class="card">
+            <div id="tanks" class="tanks"></div>
+            <p class="muted center" id="tank-note"></p>
+          </div>
+        </section>
+
+        <!-- ============ Weather & A/C ============ -->
+        <section class="page" data-page="weather" hidden>
+          <div class="card" id="weather-card" hidden>
+            <h2>Weather</h2>
+            <div id="weather-now" class="weather-now"></div>
+            <div id="forecast" class="forecast"></div>
+          </div>
+          <div class="card" id="radar-card" hidden>
+            <h2>Radar</h2>
+            <img id="radar" class="radar" alt="Weather radar loop">
+            <p class="muted">Updates every 10 minutes. From the National Weather Service.</p>
+          </div>
+          <div class="card" id="climate-card" hidden>
+            <h2>Air conditioning</h2>
+            <div id="climate" class="tiles"></div>
+          </div>
+        </section>
+
+        <!-- ============ Network ============ -->
+        <section class="page" data-page="network" hidden>
+          <div class="card">
+            <div id="network" class="net-list"></div>
+          </div>
+        </section>
+
+        <!-- ============ Data (raw history) ============ -->
+        <section class="page" data-page="data" hidden>
+          <div class="card">
+            <div class="chart-head">
+              <div class="tabs" role="tablist" id="kind-tabs">
+                <button data-kind="temps" class="active">Temperature</button>
+                <button data-kind="humidity">Humidity</button>
+                <button data-kind="co2" hidden>CO₂</button>
+                <button data-kind="tanks">Tanks</button>
+              </div>
+              <div class="tabs" role="tablist" id="range-tabs">
+                <button data-range="24h" class="active">24 hours</button>
+                <button data-range="7d">7 days</button>
+                <button data-range="30d">30 days</button>
+                <button data-range="all">All time</button>
+              </div>
+            </div>
+            <div class="chart-wrap"><canvas id="chart"></canvas></div>
+            <div class="chart-foot">
+              <p id="chart-msg" class="muted"></p>
+              <!-- v1.4: download exactly what the chart shows -->
+              <div class="dl-group">
+                <label class="combine" id="combine-wrap"><input type="checkbox" id="combine"> <span id="combine-text">Include humidity</span></label>
+                <a id="dl-csv" class="dl-csv" download>⬇ Download CSV</a>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
