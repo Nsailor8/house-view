@@ -1,0 +1,14 @@
+# Local dev options (real entity IDs) — HA keeps the real config
+options.json
+*.local.json
+
+# Secrets / env
+.env
+.env.*
+
+# Tooling
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/

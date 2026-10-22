@@ -1,0 +1,5 @@
+# Makes this repo installable as a Home Assistant add-on repository.
+# Only used once the repo is public (the Supervisor can't clone private repos).
+name: House View
+url: https://github.com/<your-username>/house-view
+maintainer: Nick

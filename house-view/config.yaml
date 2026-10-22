@@ -1,0 +1,83 @@
+# Home Assistant add-on definition for the House View page.
+# Edit entity IDs and names in the add-on's Configuration tab after installing;
+# the values below are only the starting defaults.
+# Every optional block (weather, climate, air quality, network) stays hidden
+# on the page until you fill it in.
+name: House View
+version: "1.4.5"
+slug: house_view
+description: Simple read-only house dashboard for non-technical viewers
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+# Gives the add-on a SUPERVISOR_TOKEN so it can read HA without a long-lived token.
+homeassistant_api: true
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: House View web page
+webui: "http://[HOST]:[PORT:8099]/"
+
+options:
+  title: "Our House"
+  hot_threshold: 80
+  tank_alert_threshold: 70
+  # Storm prep: weather entity (e.g. weather.forecast_home). Leave empty to hide.
+  weather: ""
+  rain_alert_chance: 70
+  # NWS radar site for the radar loop on the Weather page (e.g. KCLX). Leave empty to hide.
+  radar_station: ""
+  # Listed top to bottom. Sections refer to these by position (0 = first).
+  floors:
+    - "2nd floor"
+    - "Main floor"
+    - "Basement"
+  # Layout matches the sketch: left column 7/8/9, middle 4/5/6, right 1/2/3.
+  # Optional per section: co2 and pm25 entity IDs for air quality.
+  sections:
+    - { number: 7, name: "Section 7",  floor: 0, column: 0, temperature: sensor.section_7_temperature, humidity: sensor.section_7_humidity }
+    - { number: 4, name: "Kitchen",    floor: 0, column: 1, temperature: sensor.section_4_temperature, humidity: sensor.section_4_humidity }
+    - { number: 1, name: "Loft",       floor: 0, column: 2, temperature: sensor.section_1_temperature, humidity: sensor.section_1_humidity }
+    - { number: 8, name: "Section 8",  floor: 1, column: 0, temperature: sensor.section_8_temperature, humidity: sensor.section_8_humidity }
+    - { number: 5, name: "Brick arch", floor: 1, column: 1, temperature: sensor.section_5_temperature, humidity: sensor.section_5_humidity }
+    - { number: 2, name: "Section 2",  floor: 1, column: 2, temperature: sensor.section_2_temperature, humidity: sensor.section_2_humidity }
+    - { number: 9, name: "Section 9",  floor: 2, column: 0, temperature: sensor.section_9_temperature, humidity: sensor.section_9_humidity }
+    - { number: 6, name: "Section 6",  floor: 2, column: 1, temperature: sensor.section_6_temperature, humidity: sensor.section_6_humidity }
+    - { number: 3, name: "Section 3",  floor: 2, column: 2, temperature: sensor.section_3_temperature, humidity: sensor.section_3_humidity }
+  tanks:
+    - { name: "North tank", entity: sensor.north_tank_level }
+    - { name: "South tank", entity: sensor.south_tank_level }
+  # A/C units or thermostats (climate.* entities). Shown read-only.
+  climate: []
+  # Network devices to show as Online/Offline (device_tracker.*, binary_sensor.*, etc.).
+  network: []
+
+schema:
+  title: str
+  hot_threshold: float
+  tank_alert_threshold: float
+  weather: str?
+  rain_alert_chance: "int(0,100)"
+  radar_station: str?
+  floors:
+    - str
+  sections:
+    - number: int
+      name: str
+      floor: int
+      column: "int(0,2)"
+      temperature: str
+      humidity: str?
+      co2: str?
+      pm25: str?
+  tanks:
+    - name: str
+      entity: str
+  climate:
+    - name: str
+      entity: str
+  network:
+    - name: str
+      entity: str
