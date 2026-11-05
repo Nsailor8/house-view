@@ -4,7 +4,7 @@
 # Every optional block (weather, climate, air quality, network) stays hidden
 # on the page until you fill it in.
 name: House View
-version: "1.4.5"
+version: "1.5.0"
 slug: house_view
 description: Simple read-only house dashboard for non-technical viewers
 arch:
@@ -51,7 +51,13 @@ options:
     - { name: "South tank", entity: sensor.south_tank_level }
   # A/C units or thermostats (climate.* entities). Shown read-only.
   climate: []
-  # Network devices to show as Online/Offline (device_tracker.*, binary_sensor.*, etc.).
+  # Topology tree for the Network page and Deco badges on Rooms.
+  # Example (leave empty to hide Network):
+  # network:
+  #   - { id: router, name: Router, type: router }
+  #   - { id: gallery, name: Gallery, type: deco, parent: router, section: 5,
+  #       link: wired, entity: device_tracker.gallery_deco, deco_name: "Gallery" }
+  #   - { id: plan9, name: Section 9, type: deco, section: 9, planned: true }
   network: []
 
 schema:
@@ -79,5 +85,12 @@ schema:
     - name: str
       entity: str
   network:
-    - name: str
-      entity: str
+    - id: str
+      name: str
+      type: "list(router|deco|switch|haos|client)"
+      parent: str?
+      section: int?
+      link: "list(wired|wireless)?"
+      entity: str?
+      deco_name: str?
+      planned: bool?
