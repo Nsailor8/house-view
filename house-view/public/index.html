@@ -14,7 +14,7 @@
     <nav class="sidebar" aria-label="Pages">
       <div class="brand" id="brand">Our House</div>
       <a href="#overview" data-page="overview"><span class="ic">🏠</span><span>Overview</span></a>
-      <a href="#rooms" data-page="rooms"><span class="ic">🌡️</span><span>Rooms</span></a>
+      <a href="#temperature" data-page="temperature"><span class="ic">🌡️</span><span>Temperature</span></a>
       <a href="#tanks" data-page="tanks"><span class="ic">💧</span><span>Tanks</span></a>
       <a href="#weather" data-page="weather" hidden><span class="ic">⛅</span><span>Weather &amp; A/C</span></a>
       <a href="#network" data-page="network" hidden><span class="ic">📶</span><span>Network</span></a>
@@ -35,7 +35,7 @@
         <!-- ============ Overview ============ -->
         <section class="page" data-page="overview">
           <div class="summary">
-            <a class="card sum" href="#rooms">
+            <a class="card sum" href="#temperature">
               <h2>Inside</h2>
               <div id="sum-floors" class="sum-rows"></div>
             </a>
@@ -58,8 +58,8 @@
           </div>
         </section>
 
-        <!-- ============ Rooms (Govees) ============ -->
-        <section class="page" data-page="rooms" hidden>
+        <!-- ============ Temperature (Govees) ============ -->
+        <section class="page" data-page="temperature" hidden>
           <div class="card">
             <div class="house">
               <div class="roof"></div>
@@ -108,7 +108,16 @@
         <!-- ============ Network ============ -->
         <section class="page" data-page="network" hidden>
           <div class="card">
-            <div id="network" class="net-list"></div>
+            <div id="net-internet" class="net-internet" hidden></div>
+            <div class="house">
+              <div class="roof"></div>
+              <div id="net-floors"></div>
+            </div>
+            <p class="muted center net-map-note">Deco location by section. Green = online, red = offline.</p>
+          </div>
+          <div class="card">
+            <h2>Decos</h2>
+            <div id="deco-list" class="deco-list"></div>
           </div>
         </section>
 

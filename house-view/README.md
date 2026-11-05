@@ -47,13 +47,33 @@ Each of these stays hidden on the page until you fill it in on the Configuration
 | `weather` | Your weather entity, e.g. `weather.forecast_home` | Current weather, a 5-day forecast, and a red "empty the tanks" banner when rain chance in the next 2 days is at least `rain_alert_chance` and a tank is above `tank_alert_threshold` |
 | `climate` | A name plus a `climate.*` entity per A/C or thermostat | Current temperature, mode and set point (read-only) |
 | `co2` / `pm25` on a section | The air monitor's CO₂ and PM2.5 entity IDs | Coloured air-quality readings on that room, plus a CO₂ history tab |
-| `network` | A name plus an entity per Deco or device (`device_tracker.*`, `binary_sensor.*`) | An Online/Offline list |
+| `network` | Topology nodes (see below) | House map of Decos on Network, Deco list with MAC/IP, Internet + Decos online on Overview |
+
+### Network topology (v1.5)
+
+Each entry is a node in the topology. Status is computed **on the server** and pushed over SSE. Entity IDs stay on the server; Deco MAC and IP (from HA attributes) are shown on the Network page only.
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Stable id (used as `parent` by children) |
+| `name` | yes | Display name |
+| `type` | yes | `router`, `deco`, `switch`, `haos`, or `client` |
+| `parent` | no | Parent node `id` (omit for roots) |
+| `section` | no | House section number — places a Deco badge on that room |
+| `link` | no | `wired` (solid) or `wireless` (dashed) connector from the parent |
+| `entity` | no | Read-only HA entity (`device_tracker.*`, etc.) for online/offline |
+| `deco_name` | no | Must match clients' `deco_device` attribute (not the entity id — clients keep the Deco they first joined in their entity id when they roam) |
+| `planned` | no | Show as planned (dashed badge); excluded from “Decos online” counts |
+
+**Status rules:** an entity node is `on` / `off` / `unknown` from its state. `haos` with no entity follows the add-on's HA connection. `planned` nodes stay `planned`. Other nodes without an entity (switch, router) are `on` if any descendant is `on`, `off` if every non-planned descendant is `off`, else `unknown`. Deco client counts are online `device_tracker` entities whose `deco_device` equals that node's `deco_name`. Internet status comes from the Deco with `master: true` (`internet_online` attribute), read server-side only.
+
+House View is read-only: it never calls ha-tplink-deco control entities or services (`switch.deco_polling`, `select.polling_interval`, `tplink_deco.reboot_deco`, etc.).
 
 Chart.js is bundled in `public/`, so the page still works when the internet is down.
 
 ## Pages and history (v1.3)
 
-- Sidebar pages: Overview, Rooms, Tanks, Weather & A/C, Network and Data. Weather & A/C and Network only appear once configured. On phones the sidebar becomes a bottom tab bar.
+- Sidebar pages: Overview, Temperature, Tanks, Weather & A/C, Network and Data. Weather & A/C and Network only appear once configured. On phones the sidebar becomes a bottom tab bar.
 - `radar_station`: a 4-letter NWS radar site (e.g. `KCLX` for Charleston) adds a radar loop to the Weather & A/C page.
 - Data ranges: 24 hours and 7 days use HA's detailed history (kept 10 days by default). 30 days and All time use HA's long-term statistics (hourly/daily averages, kept forever). Sensors need a `state_class` of `measurement` for long-term statistics, which Govee and most level sensors have.
 

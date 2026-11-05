@@ -3,11 +3,17 @@
 
 let config = null;
 const states = {};
+let net = { internet: null, nodes: {} };
 let chart = null;
 let chartKind = 'temps';
 const STALE_MS = 2 * 3600e3; // grey out a room if a sensor hasn't reported in 2 h
 
 const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 function num(entityId) {
   const s = states[entityId];
@@ -32,7 +38,7 @@ function buildHouse() {
   config.floors.forEach((floorName, fi) => {
     const floor = document.createElement('div');
     floor.className = 'floor';
-    floor.innerHTML = `<div class="floor-label">${floorName}</div><div class="rooms"></div>`;
+    floor.innerHTML = `<div class="floor-label">${esc(floorName)}</div><div class="rooms"></div>`;
     const rooms = floor.querySelector('.rooms');
     for (let col = 0; col < 3; col++) {
       const s = config.sections.find((x) => x.floor === fi && x.column === col);
@@ -40,7 +46,7 @@ function buildHouse() {
       room.className = 'room';
       if (s) {
         room.id = `room-${s.number}`;
-        room.innerHTML = `<div class="name">${s.name}</div><div class="temp">–</div>` +
+        room.innerHTML = `<div class="name">${esc(s.name)}</div><div class="temp">–</div>` +
           `<div class="hum"></div><div class="air"></div>`;
       } else {
         room.style.visibility = 'hidden';
@@ -55,7 +61,7 @@ function buildTanks() {
   $('tanks').innerHTML = config.tanks.map((t, i) => `
     <div class="tank" id="tank-${i}">
       <div class="tank-body"><div class="tank-fill"></div><div class="tank-pct">–</div></div>
-      <div class="tank-name">${t.name}</div>
+      <div class="tank-name">${esc(t.name)}</div>
       <div class="tank-note"></div>
     </div>`).join('');
 }
@@ -64,11 +70,8 @@ function buildOptional() {
   $('climate-card').hidden = !config.climate.length;
   $('climate').innerHTML = config.climate.map((c, i) => `
     <div class="ac" id="ac-${i}">
-      <div class="name">${c.name}</div><div class="now">–</div><div class="mode"></div>
+      <div class="name">${esc(c.name)}</div><div class="now">–</div><div class="mode"></div>
     </div>`).join('');
-
-  $('network').innerHTML = config.network.map((n, i) => `
-    <div class="net" id="net-${i}"><span>${n.name}</span><span class="s">–</span></div>`).join('');
 
   const hasAir = config.sections.some((s) => s.co2 || s.pm25);
   $('air-legend').hidden = !hasAir;
@@ -84,6 +87,7 @@ function buildOptional() {
   $('sum-weather-card').hidden = !config.weather;
   $('sum-ac-card').hidden = !config.climate.length;
   $('sum-net-card').hidden = !config.network.length;
+  if (config.network.length) buildNetHouse();
 }
 
 function refreshRadar() {
@@ -136,20 +140,89 @@ function renderClimate() {
 }
 
 // ---------- Network ----------
-const ONLINE = new Set(['home', 'on', 'connected', 'online', 'true']);
-const OFFLINE = new Set(['not_home', 'off', 'disconnected', 'offline', 'false', 'unavailable']);
+function nodeStatus(id) {
+  const n = net.nodes && net.nodes[id];
+  return (n && n.status) || 'unknown';
+}
+
+function decoForSection(num) {
+  return config.network.find((n) => n.type === 'deco' && n.section === num) || null;
+}
+
+function buildNetHouse() {
+  const wrap = $('net-floors');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  config.floors.forEach((floorName, fi) => {
+    const floor = document.createElement('div');
+    floor.className = 'floor';
+    floor.innerHTML = `<div class="floor-label">${esc(floorName)}</div><div class="rooms"></div>`;
+    const rooms = floor.querySelector('.rooms');
+    for (let col = 0; col < 3; col++) {
+      const s = config.sections.find((x) => x.floor === fi && x.column === col);
+      const room = document.createElement('div');
+      room.className = 'room net-room';
+      if (s) {
+        room.id = `net-room-${s.number}`;
+        const deco = decoForSection(s.number);
+        const show = deco && !deco.planned;
+        room.innerHTML = `<div class="name">${esc(s.name)}</div>` +
+          (show
+            ? `<div class="deco-badge" id="net-badge-${s.number}"></div>`
+            : `<div class="net-empty">No Deco</div>`);
+      } else {
+        room.style.visibility = 'hidden';
+      }
+      rooms.appendChild(room);
+    }
+    wrap.appendChild(floor);
+  });
+}
 
 function renderNetwork() {
-  config.network.forEach((n, i) => {
-    const el = $(`net-${i}`);
-    const s = states[n.entity];
-    if (!el) return;
-    const label = el.querySelector('.s');
-    const st = s ? String(s.state).toLowerCase() : null;
-    if (st && ONLINE.has(st)) { label.textContent = 'Online'; label.className = 's on'; }
-    else if (st && OFFLINE.has(st)) { label.textContent = 'Offline'; label.className = 's off'; }
-    else { label.textContent = s ? s.state : '–'; label.className = 's'; }
-  });
+  if (!config.network.length) return;
+
+  const inet = $('net-internet');
+  if (net.internet == null) {
+    inet.hidden = true;
+  } else {
+    inet.hidden = false;
+    const on = !!net.internet;
+    inet.innerHTML = `<span class="ndot ${on ? 'on' : 'off'}"></span>` +
+      `<span>Internet:</span><span class="label ${on ? 'on' : 'off'}">${on ? 'Online' : 'Offline'}</span>`;
+  }
+
+  for (const s of config.sections) {
+    const badge = $(`net-badge-${s.number}`);
+    if (!badge) continue;
+    const deco = decoForSection(s.number);
+    if (!deco) continue;
+    const st = nodeStatus(deco.id);
+    badge.className = 'deco-badge';
+    badge.innerHTML = `<span class="wifi">📶</span><span class="ndot ${esc(st)}"></span>` +
+      `<span class="nm">${esc(deco.name)}</span>`;
+  }
+
+  const decos = config.network.filter((n) => n.type === 'deco' && !n.planned);
+  const list = $('deco-list');
+  if (!list) return;
+  list.innerHTML = decos.map((n) => {
+    const st = nodeStatus(n.id);
+    const info = net.nodes[n.id] || {};
+    const where = n.section != null ? `Section ${esc(String(n.section))}` : 'Unassigned';
+    const statusLabel = st === 'on' ? 'Online' : st === 'off' ? 'Offline' : 'Unknown';
+    const mac = info.mac ? esc(info.mac) : '–';
+    const ip = info.ip ? esc(info.ip) : '–';
+    return `<div class="deco-row">
+      <div class="deco-row-top">
+        <span class="ndot ${esc(st)}"></span>
+        <span class="nm">${esc(n.name)}</span>
+        <span class="sec">${where}</span>
+        <span class="st ${esc(st)}">${statusLabel}</span>
+      </div>
+      <div class="deco-row-meta"><span>MAC ${mac}</span><span>IP ${ip}</span></div>
+    </div>`;
+  }).join('') || '<p class="muted">No Decos configured.</p>';
 }
 
 // ---------- Weather + storm prep ----------
@@ -200,7 +273,7 @@ function renderAlert() {
   if (rain < config.rain_alert_chance || !full.length) { box.hidden = true; return; }
   box.hidden = false;
   box.innerHTML = `🌧️ Rain likely in the next 2 days (${rain}% chance). Time to empty the tanks.` +
-    `<small>${full.map((t) => `${t.name}: ${Math.round(t.v)}% full`).join(' · ')}</small>`;
+    `<small>${full.map((t) => `${esc(t.name)}: ${Math.round(t.v)}% full`).join(' · ')}</small>`;
 }
 
 // ---------- Render live values ----------
@@ -211,18 +284,18 @@ function renderOverview() {
       .filter((t) => t !== null);
     const avg = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null;
     const hot = avg !== null && avg >= config.hot_threshold;
-    return `<div class="sum-row"><span>${name}</span>` +
+    return `<div class="sum-row"><span>${esc(name)}</span>` +
       `<span class="v ${hot ? 'hot' : ''}">${avg === null ? '–' : Math.round(avg) + '°'}</span></div>`;
   });
   const warm = config.sections.map((x) => ({ n: x.name, t: num(x.temperature) }))
     .filter((x) => x.t !== null).sort((a, b) => b.t - a.t)[0];
-  if (warm) rows.push(`<div class="sum-row muted"><span>Warmest: ${warm.n}</span><span>${Math.round(warm.t)}°</span></div>`);
+  if (warm) rows.push(`<div class="sum-row muted"><span>Warmest: ${esc(warm.n)}</span><span>${Math.round(warm.t)}°</span></div>`);
   $('sum-floors').innerHTML = rows.join('');
 
   $('sum-tanks').innerHTML = config.tanks.map((t) => {
     const v = num(t.entity);
     const full = v !== null && v >= config.tank_alert_threshold;
-    return `<div><div class="sum-row"><span>${t.name}</span>` +
+    return `<div><div class="sum-row"><span>${esc(t.name)}</span>` +
       `<span class="v ${full ? 'hot' : ''}">${v === null ? '–' : Math.round(v) + '%'}</span></div>` +
       `<div class="mini-bar"><i class="${full ? 'full' : ''}" style="width:${v === null ? 0 : Math.max(0, Math.min(100, v))}%"></i></div></div>`;
   }).join('');
@@ -231,7 +304,7 @@ function renderOverview() {
     const w = states[config.weather];
     const today = forecast && forecast[0];
     $('sum-weather').innerHTML = !w ? '<div class="muted">No reading</div>' :
-      `<div class="sum-row"><span>${ICON[w.state] || ''} ${CONDITION[w.state] || w.state}</span>` +
+      `<div class="sum-row"><span>${ICON[w.state] || ''} ${CONDITION[w.state] || esc(w.state)}</span>` +
       `<span class="v">${w.attrs && w.attrs.temperature != null ? Math.round(w.attrs.temperature) + '°' : '–'}</span></div>` +
       (today && today.precipitation_probability != null
         ? `<div class="sum-row muted"><span>Rain today</span><span>${today.precipitation_probability}%</span></div>` : '');
@@ -243,19 +316,26 @@ function renderOverview() {
       const a = (st && st.attrs) || {};
       const label = !st || st.state === 'unavailable' ? 'Not responding'
         : st.state === 'off' ? 'Off' : (HVAC_ACTION[a.hvac_action] || HVAC_MODE[st.state] || st.state);
-      return `<div class="sum-row"><span>${c.name}</span><span class="v">${label}</span></div>`;
+      return `<div class="sum-row"><span>${esc(c.name)}</span><span class="v">${esc(label)}</span></div>`;
     }).join('');
   }
 
   if (config.network.length) {
-    let on = 0;
-    for (const n of config.network) {
-      const st = states[n.entity];
-      if (st && ONLINE.has(String(st.state).toLowerCase())) on += 1;
+    const rows = [];
+    if (net.internet != null) {
+      const on = !!net.internet;
+      rows.push(`<div class="sum-row"><span>Internet</span>` +
+        `<span class="v ${on ? 'good' : 'hot'}">${on ? 'Online' : 'Offline'}</span></div>`);
     }
-    const all = on === config.network.length;
-    $('sum-net').innerHTML = `<div class="sum-row"><span>Devices online</span>` +
-      `<span class="v ${all ? 'good' : 'hot'}">${on} of ${config.network.length}</span></div>`;
+    const decos = config.network.filter((n) => n.type === 'deco' && !n.planned);
+    let on = 0;
+    for (const n of decos) {
+      if (nodeStatus(n.id) === 'on') on += 1;
+    }
+    const all = decos.length > 0 && on === decos.length;
+    rows.push(`<div class="sum-row"><span>Decos online</span>` +
+      `<span class="v ${all ? 'good' : 'hot'}">${on} of ${decos.length}</span></div>`);
+    $('sum-net').innerHTML = rows.join('');
   }
 }
 
@@ -308,6 +388,7 @@ function connectStream() {
     render();
   });
   es.addEventListener('forecast', (e) => { forecast = JSON.parse(e.data); render(); });
+  es.addEventListener('network', (e) => { net = JSON.parse(e.data); render(); });
   es.onerror = () => setStatus(false); // EventSource reconnects automatically
 }
 
@@ -455,7 +536,7 @@ function updateExport() {
 }
 
 // ---------- Pages ----------
-const PAGE_TITLES = { overview: 'Overview', rooms: 'Rooms', tanks: 'Water tanks',
+const PAGE_TITLES = { overview: 'Overview', temperature: 'Temperature', tanks: 'Water tanks',
   weather: 'Weather & A/C', network: 'Wi-Fi network', data: 'Data' };
 let currentPage = 'overview';
 
