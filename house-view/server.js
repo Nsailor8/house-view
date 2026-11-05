@@ -38,9 +38,66 @@ const options = JSON.parse(fs.readFileSync(OPTIONS_PATH, 'utf8'));
 const sections = options.sections || [];
 const tanks = options.tanks || [];
 const climate = options.climate || [];
-const network = options.network || [];
 const floors = options.floors || [];
 const weatherEntity = (options.weather || '').trim();
+
+// Normalize + validate topology nodes. Drops bad ids/parents/cycles with a warning.
+function loadNetworkNodes(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const normalized = list.map((n, i) => {
+    const node = { ...n };
+    if (!node.id || !node.type) {
+      node.id = node.id || `n${i}`;
+      node.type = node.type || 'client';
+    }
+    return node;
+  });
+
+  const byId = new Map();
+  const kept = [];
+  for (const n of normalized) {
+    if (byId.has(n.id)) {
+      console.warn(`Network node dropped (duplicate id): ${n.id}`);
+      continue;
+    }
+    byId.set(n.id, n);
+    kept.push(n);
+  }
+
+  const valid = [];
+  for (const n of kept) {
+    if (n.parent && !byId.has(n.parent)) {
+      console.warn(`Network node dropped (missing parent ${n.parent}): ${n.id}`);
+      continue;
+    }
+    valid.push(n);
+  }
+  const validIds = new Set(valid.map((n) => n.id));
+
+  // Drop nodes that participate in a parent cycle.
+  function inCycle(id) {
+    const seen = new Set();
+    let cur = id;
+    while (cur) {
+      if (seen.has(cur)) return true;
+      seen.add(cur);
+      const node = byId.get(cur);
+      cur = node && validIds.has(node.id) ? node.parent : null;
+      if (cur && !validIds.has(cur)) break;
+    }
+    return false;
+  }
+  const networkNodes = valid.filter((n) => {
+    if (inCycle(n.id)) {
+      console.warn(`Network node dropped (cycle): ${n.id}`);
+      return false;
+    }
+    return true;
+  });
+  return networkNodes;
+}
+
+const network = loadNetworkNodes(options.network);
 
 const watched = new Set();
 for (const s of sections) {
@@ -52,6 +109,16 @@ for (const list of [tanks, climate, network]) {
   for (const x of list) if (x.entity) watched.add(x.entity);
 }
 if (weatherEntity) watched.add(weatherEntity);
+
+// Browser gets topology shape only — never entity ids or deco_name (or mac/ip).
+const publicNetwork = network.map((n) => {
+  const out = { id: n.id, name: n.name, type: n.type };
+  if (n.parent) out.parent = n.parent;
+  if (n.section != null) out.section = n.section;
+  if (n.link) out.link = n.link;
+  if (n.planned) out.planned = true;
+  return out;
+});
 
 const publicConfig = {
   title: options.title || 'Our House',
@@ -66,7 +133,7 @@ const publicConfig = {
   sections,
   tanks,
   climate,
-  network,
+  network: publicNetwork,
 };
 
 // ---------- Chartable sensors (the only ones history/export ever query) ----------
@@ -76,9 +143,24 @@ for (const t of tanks) if (t.entity) chartIds.add(t.entity);
 
 // ---------- State + browser clients ----------
 const states = {};
-const clients = new Set();
+const clients = new Set(); // SSE browser connections (not Deco Wi-Fi clients)
 let haConnected = false;
 let forecast = null; // [{ datetime, condition, temperature, templow, precipitation_probability }]
+
+// Deco entity meta. master/internet stay server-side for status; mac/ip go to Network page.
+const decoMeta = {}; // entity_id -> { master, internet_online, mac, ip }
+
+const ONLINE_STATES = new Set(['home', 'on', 'connected', 'online', 'true']);
+const OFFLINE_STATES = new Set(['not_home', 'off', 'disconnected', 'offline', 'false', 'unavailable']);
+
+const networkById = new Map(network.map((n) => [n.id, n]));
+const networkChildren = new Map();
+for (const n of network) {
+  if (!n.parent) continue;
+  if (!networkChildren.has(n.parent)) networkChildren.set(n.parent, []);
+  networkChildren.get(n.parent).push(n.id);
+}
+const networkEntityIds = new Set(network.filter((n) => n.entity).map((n) => n.entity));
 
 // Only these attributes ever leave the server (A/C and weather cards need them).
 const KEEP_ATTRS = ['current_temperature', 'temperature', 'target_temp_high',
@@ -94,6 +176,123 @@ function slim(s) {
     last_changed: s.last_changed,
     attrs,
   };
+}
+
+function truthy(v) {
+  return v === true || v === 'true' || v === 'True' || v === 'on' || v === 1 || v === '1';
+}
+
+function firstAttr(a, keys) {
+  for (const k of keys) {
+    const v = a[k];
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return null;
+}
+
+function ingestWatched(s) {
+  if (!s || !s.entity_id) return;
+  if (networkEntityIds.has(s.entity_id)) {
+    const a = s.attributes || {};
+    decoMeta[s.entity_id] = {
+      master: a.master !== undefined ? truthy(a.master) : false,
+      internet_online: a.internet_online === undefined ? null : truthy(a.internet_online),
+      mac: firstAttr(a, ['mac', 'mac_address', 'macaddress']),
+      ip: firstAttr(a, ['ip', 'ip_address', 'ipv4', 'ipaddress']),
+    };
+  }
+  states[s.entity_id] = slim(s);
+}
+
+function entityStatus(state) {
+  if (state == null) return 'unknown';
+  const st = String(state).toLowerCase();
+  if (ONLINE_STATES.has(st)) return 'on';
+  if (OFFLINE_STATES.has(st)) return 'off';
+  return 'unknown';
+}
+
+function networkStatus() {
+  const statusCache = {};
+
+  function statusOf(id) {
+    if (statusCache[id]) return statusCache[id];
+    const node = networkById.get(id);
+    if (!node) return 'unknown';
+
+    if (node.planned) {
+      statusCache[id] = 'planned';
+      return 'planned';
+    }
+    if (node.entity) {
+      const s = states[node.entity];
+      statusCache[id] = entityStatus(s && s.state);
+      return statusCache[id];
+    }
+    if (node.type === 'haos') {
+      statusCache[id] = haConnected ? 'on' : 'off';
+      return statusCache[id];
+    }
+
+    // Aggregate descendants (switch, router, etc. without an entity).
+    const kids = networkChildren.get(id) || [];
+    const childStatuses = kids.map(statusOf);
+    if (childStatuses.some((st) => st === 'on')) {
+      statusCache[id] = 'on';
+      return 'on';
+    }
+    const nonPlanned = childStatuses.filter((st) => st !== 'planned');
+    if (nonPlanned.length && nonPlanned.every((st) => st === 'off')) {
+      statusCache[id] = 'off';
+      return 'off';
+    }
+    statusCache[id] = 'unknown';
+    return 'unknown';
+  }
+
+  const nodes = {};
+  for (const n of network) {
+    const entry = { status: statusOf(n.id) };
+    if (n.type === 'deco' && n.entity) {
+      const meta = decoMeta[n.entity];
+      if (meta) {
+        if (meta.mac) entry.mac = meta.mac;
+        if (meta.ip) entry.ip = meta.ip;
+      }
+    }
+    nodes[n.id] = entry;
+  }
+
+  let internet = null;
+  for (const n of network) {
+    if (!n.entity) continue;
+    const meta = decoMeta[n.entity];
+    if (meta && meta.master) {
+      internet = meta.internet_online;
+      break;
+    }
+  }
+
+  return { internet, nodes };
+}
+
+let lastNetworkJson = '';
+let networkTimer = null;
+
+function pushNetwork(force) {
+  const payload = networkStatus();
+  const json = JSON.stringify(payload);
+  if (!force && json === lastNetworkJson) return;
+  lastNetworkJson = json;
+  broadcast('network', payload);
+}
+
+function scheduleNetwork() {
+  if (networkTimer) return;
+  networkTimer = setTimeout(() => {
+    networkTimer = null;
+    pushNetwork(false);
+  }, 1000);
 }
 
 function sse(res, event, data) {
@@ -215,6 +414,7 @@ function connectHA() {
       retryMs = 2000;
       haConnected = true;
       broadcast('status', { connected: true });
+      scheduleNetwork();
       getStatesId = ++msgId;
       ws.send(JSON.stringify({ id: getStatesId, type: 'get_states' }));
       ws.send(JSON.stringify({ id: ++msgId, type: 'subscribe_events', event_type: 'state_changed' }));
@@ -223,18 +423,20 @@ function connectHA() {
         .catch(() => {});
     } else if (msg.type === 'result' && msg.id === getStatesId && msg.success) {
       for (const s of msg.result) {
-        if (watched.has(s.entity_id)) states[s.entity_id] = slim(s);
+        if (watched.has(s.entity_id)) ingestWatched(s);
       }
       for (const id of watched) {
         if (!states[id]) console.warn(`Not found in Home Assistant (check the name): ${id}`);
       }
       broadcast('snapshot', states);
+      pushNetwork(true);
       refreshForecast();
     } else if (msg.type === 'event') {
       const d = msg.event && msg.event.data;
       if (d && d.new_state && watched.has(d.entity_id)) {
-        states[d.entity_id] = slim(d.new_state);
+        ingestWatched(d.new_state);
         broadcast('state', { entity_id: d.entity_id, ...states[d.entity_id] });
+        if (networkEntityIds.has(d.entity_id)) scheduleNetwork();
       }
     }
   });
@@ -249,6 +451,7 @@ function connectHA() {
     for (const done of pending.values()) done({ success: false, error: { message: 'connection lost' } });
     pending.clear();
     broadcast('status', { connected: false });
+    scheduleNetwork();
     setTimeout(connectHA, retryMs);
     retryMs = Math.min(retryMs * 2, 60000);
   });
@@ -494,6 +697,7 @@ const server = http.createServer(async (req, res) => {
     });
     sse(res, 'status', { connected: haConnected });
     sse(res, 'snapshot', states);
+    sse(res, 'network', networkStatus());
     if (forecast) sse(res, 'forecast', forecast);
     clients.add(res);
     req.on('close', () => clients.delete(res));
