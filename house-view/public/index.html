@@ -137,8 +137,11 @@
                 <button data-range="30d">30 days</button>
                 <button data-range="all">All time</button>
               </div>
+              <!-- v1.6: All / one side / one chart per side. Built from the `columns` option. -->
+              <div class="tabs side-tabs" role="tablist" id="side-tabs" hidden></div>
             </div>
-            <div class="chart-wrap"><canvas id="chart"></canvas></div>
+            <!-- v1.6: one chart, or one per side; app.js builds the canvases -->
+            <div id="charts" class="charts"></div>
             <div class="chart-foot">
               <p id="chart-msg" class="muted"></p>
               <!-- v1.4: download exactly what the chart shows -->

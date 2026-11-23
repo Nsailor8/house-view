@@ -279,3 +279,16 @@ a.sum:hover { transform: translateY(-2px); }
   border: 1px solid var(--line); background: var(--bg); color: var(--text); text-decoration: none;
 }
 .dl-csv:hover { background: var(--water); border-color: var(--water); color: #fff; }
+
+/* ---------- v1.6: side filter and one chart per side ---------- */
+/* The side names can be long, so this row scrolls sideways on a phone instead of clipping. */
+main > *, .page > * { min-width: 0; }
+.side-tabs { max-width: 100%; overflow-x: auto; }
+.side-tabs button { white-space: nowrap; flex-shrink: 0; }
+.charts { display: grid; gap: 16px; }
+.chart-panel { min-width: 0; }
+.chart-panel h3 { font-size: 1rem; margin: 4px 0 4px; }
+.charts.split .chart-wrap { height: 260px; }
+@media (max-width: 760px) {
+  .charts.split .chart-wrap { height: 230px; }
+}
