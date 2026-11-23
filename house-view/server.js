@@ -40,6 +40,14 @@ const tanks = options.tanks || [];
 const climate = options.climate || [];
 const floors = options.floors || [];
 const weatherEntity = (options.weather || '').trim();
+// v1.6: names of the house's three columns, left to right (the chart's side filter).
+const columns = (Array.isArray(options.columns) ? options.columns : [])
+  .slice(0, 3).map((c) => String(c || '').trim());
+// v1.6: outside sensors drawn over the Temperature and Humidity charts.
+const outdoor = {
+  temperature: (options.outdoor_temperature || '').trim() || null,
+  humidity: (options.outdoor_humidity || '').trim() || null,
+};
 
 // Normalize + validate topology nodes. Drops bad ids/parents/cycles with a warning.
 function loadNetworkNodes(raw) {
@@ -109,6 +117,7 @@ for (const list of [tanks, climate, network]) {
   for (const x of list) if (x.entity) watched.add(x.entity);
 }
 if (weatherEntity) watched.add(weatherEntity);
+for (const id of Object.values(outdoor)) if (id) watched.add(id);
 
 // Browser gets topology shape only — never entity ids or deco_name (or mac/ip).
 const publicNetwork = network.map((n) => {
@@ -130,6 +139,8 @@ const publicConfig = {
   radar_station: /^[A-Z]{4}$/.test((options.radar_station || '').trim().toUpperCase())
     ? options.radar_station.trim().toUpperCase() : null,
   floors,
+  columns,
+  outdoor,
   sections,
   tanks,
   climate,
@@ -140,6 +151,7 @@ const publicConfig = {
 const chartIds = new Set();
 for (const s of sections) for (const k of ['temperature', 'humidity', 'co2', 'pm25']) if (s[k]) chartIds.add(s[k]);
 for (const t of tanks) if (t.entity) chartIds.add(t.entity);
+for (const id of Object.values(outdoor)) if (id) chartIds.add(id);
 
 // ---------- State + browser clients ----------
 const states = {};
@@ -577,32 +589,43 @@ async function getHistory(range) {
 }
 
 // ---------- Export: the chart's data as CSV ----------
-// Same tab, range and resolution as the chart, one column per line, one row per time step.
+// Same tab, range, side and resolution as the chart, one column per line, one row per time step.
 // 24h: 5-minute averages. 7d: 30-minute averages. 30d: hourly. All time: daily.
 const EXPORT_STEP = { '24h': 5 * 60e3, '7d': 30 * 60e3 };
 const KIND_FILE = { temps: 'temperature', humidity: 'humidity', co2: 'co2', tanks: 'tanks' };
 
 // combine: temperature and humidity side by side for each section (temps/humidity tabs only),
 // with the current tab's value first: "Section 1 Temperature (°F)", "Section 1 Humidity (%)", …
-function exportColumns(kind, combine) {
-  const bySection = [...sections].sort((a, b) => a.number - b.number);
+// side: a column index (0-2) keeps only that side's sections; null keeps all of them.
+// The outside sensors, when set, are added last on the Temperature and Humidity tabs.
+function exportColumns(kind, combine, side) {
+  const bySection = [...sections].sort((a, b) => a.number - b.number)
+    .filter((s) => side === null || s.column === side);
   const TEMP = { key: 'temperature', name: 'Temperature', unit: '°F' };
   const HUM = { key: 'humidity', name: 'Humidity', unit: '%' };
   if ((kind === 'temps' || kind === 'humidity') && combine) {
     const order = kind === 'temps' ? [TEMP, HUM] : [HUM, TEMP];
-    return bySection.flatMap((s) => order.filter((m) => s[m.key])
-      .map((m) => ({ header: `Section ${s.number} ${m.name} (${m.unit})`, id: s[m.key] })));
+    return [
+      ...bySection.flatMap((s) => order.filter((m) => s[m.key])
+        .map((m) => ({ header: `Section ${s.number} ${m.name} (${m.unit})`, id: s[m.key] }))),
+      ...order.filter((m) => outdoor[m.key])
+        .map((m) => ({ header: `Outside ${m.name} (${m.unit})`, id: outdoor[m.key] })),
+    ];
   }
-  if (kind === 'temps') return bySection.filter((s) => s.temperature).map((s) => ({ header: `Section ${s.number} (°F)`, id: s.temperature }));
-  if (kind === 'humidity') return bySection.filter((s) => s.humidity).map((s) => ({ header: `Section ${s.number} (%)`, id: s.humidity }));
+  if (kind === 'temps' || kind === 'humidity') {
+    const m = kind === 'temps' ? TEMP : HUM;
+    const cols = bySection.filter((s) => s[m.key]).map((s) => ({ header: `Section ${s.number} (${m.unit})`, id: s[m.key] }));
+    if (outdoor[m.key]) cols.push({ header: `Outside (${m.unit})`, id: outdoor[m.key] });
+    return cols;
+  }
   if (kind === 'co2') return bySection.filter((s) => s.co2).map((s) => ({ header: `Section ${s.number} (ppm)`, id: s.co2 }));
   return tanks.filter((t) => t.entity).map((t) => ({ header: `${t.name} (%)`, id: t.entity }));
 }
 
 function round2(v) { return Math.round(v * 100) / 100; }
 
-function chartTable(raw, kind, range, combine) {
-  const cols = exportColumns(kind, combine);
+function chartTable(raw, kind, range, combine, side) {
+  const cols = exportColumns(kind, combine, side);
   const headers = ['Time', ...cols.map((c) => c.header)];
   const rows = [];
 
@@ -654,10 +677,15 @@ function toCsv(table) {
   return out.join('\r\n') + '\r\n';
 }
 
-function csvName(range, kind, combine) {
-  const slug = publicConfig.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'house';
+function slugify(text) {
+  return String(text).toLowerCase().replace(/'/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function csvName(range, kind, combine, side) {
+  const slug = slugify(publicConfig.title) || 'house';
   const what = combine ? (kind === 'temps' ? 'temperature-humidity' : 'humidity-temperature') : KIND_FILE[kind];
-  return `${slug}-${what}-${range}-${localText(Date.now()).slice(0, 10)}.csv`;
+  const where = side === null ? '' : `-${slugify(columns[side] || '') || `side-${side + 1}`}`;
+  return `${slug}-${what}${where}-${range}-${localText(Date.now()).slice(0, 10)}.csv`;
 }
 
 // ---------- HTTP server ----------
@@ -715,7 +743,8 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // The chart's data as CSV: ?range=24h|7d|30d|all &kind=temps|humidity|co2|tanks [&combine=1]
+  // The chart's data as CSV:
+  // ?range=24h|7d|30d|all &kind=temps|humidity|co2|tanks [&combine=1] [&side=0|1|2]
   if (url.pathname === '/api/export.csv') {
     const range = url.searchParams.get('range') || '24h';
     const kind = url.searchParams.get('kind') || 'temps';
@@ -723,10 +752,14 @@ const server = http.createServer(async (req, res) => {
     if (!KIND_FILE[kind]) return json(res, { error: 'Unknown kind' }, 400);
     // &combine=1 on the Temperature or Humidity tab adds the other one.
     const combine = url.searchParams.get('combine') === '1' && (kind === 'temps' || kind === 'humidity');
+    // &side=0|1|2 keeps one column of the house (left to right). Tanks have no side.
+    const sideParam = url.searchParams.get('side');
+    if (sideParam !== null && !/^[0-2]$/.test(sideParam)) return json(res, { error: 'Unknown side' }, 400);
+    const side = sideParam === null || kind === 'tanks' ? null : Number(sideParam);
     try {
       const raw = await getRaw(range, RANGES[range].period);
-      const body = Buffer.from(toCsv(chartTable(raw, kind, range, combine)), 'utf8');
-      const name = csvName(range, kind, combine);
+      const body = Buffer.from(toCsv(chartTable(raw, kind, range, combine, side)), 'utf8');
+      const name = csvName(range, kind, combine, side);
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="${name}"`,

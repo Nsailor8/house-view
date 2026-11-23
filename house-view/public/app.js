@@ -4,7 +4,7 @@
 let config = null;
 const states = {};
 let net = { internet: null, nodes: {} };
-let chart = null;
+let charts = [];
 let chartKind = 'temps';
 const STALE_MS = 2 * 3600e3; // grey out a room if a sensor hasn't reported in 2 h
 
@@ -398,6 +398,13 @@ const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed',
 let chartRange = '24h';
 const DAY = 864e5;
 
+// v1.6: side filter. 'all' = one chart with every section, '0'/'1'/'2' = one column of the
+// house (left to right, named by config.columns), 'split' = one chart per side.
+let chartView = 'all';
+let sides = [];                  // [{ name, col }] for the columns that have a name and sections
+const hiddenLabels = new Set();  // lines switched off in the legend stay off across refreshes
+const SECTION_KEY = { temps: 'temperature', humidity: 'humidity', co2: 'co2' };
+
 function startOfDay(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
 
 // Tick marks on local-time boundaries (midnights, month starts) instead of arbitrary numbers.
@@ -435,12 +442,56 @@ function tickLabel(t, span) {
   return d.toLocaleDateString([], { month: 'short', year: 'numeric' });
 }
 
-function seriesFor(kind) {
-  const label = (s) => `${s.number} · ${s.name}`;
-  if (kind === 'temps') return config.sections.map((s) => ({ label: label(s), id: s.temperature }));
-  if (kind === 'humidity') return config.sections.filter((s) => s.humidity).map((s) => ({ label: label(s), id: s.humidity }));
-  if (kind === 'co2') return config.sections.filter((s) => s.co2).map((s) => ({ label: label(s), id: s.co2 }));
-  return config.tanks.map((t) => ({ label: t.name, id: t.entity }));
+// The lines for one chart. col = null for every section, or a column index for one side.
+// A section keeps the same colour in every view. The outside line (when set) comes first.
+function seriesFor(kind, col) {
+  const key = SECTION_KEY[kind];
+  if (!key) return config.tanks.map((t, i) => ({ label: t.name, id: t.entity, color: PALETTE[i % PALETTE.length] }));
+  const lines = config.sections
+    .map((s, i) => ({ s, color: PALETTE[i % PALETTE.length] }))
+    .filter(({ s }) => s[key] && (col === null || s.column === col))
+    .sort((a, b) => a.s.number - b.s.number)
+    .map(({ s, color }) => ({ label: `${s.number} · ${s.name}`, id: s[key], color }));
+  const outside = config.outdoor && config.outdoor[key];
+  if (outside) lines.unshift({ label: 'Outside', id: outside, outside: true });
+  return lines;
+}
+
+// Sides only apply to the per-section tabs, and only when at least two columns are named.
+function sidesOn() { return sides.length >= 2 && chartKind !== 'tanks'; }
+function activeView() { return sidesOn() ? chartView : 'all'; }
+
+// One entry per chart to draw.
+function chartPanels() {
+  const view = activeView();
+  if (view === 'all') return [{ title: null, col: null }];
+  if (view === 'split') return sides.map((s) => ({ title: s.name, col: s.col }));
+  return [{ title: null, col: Number(view) }];
+}
+
+function buildSideTabs() {
+  sides = (config.columns || [])
+    .map((name, col) => ({ name, col }))
+    .filter((c) => c.name && config.sections.some((s) => s.column === c.col));
+  const box = $('side-tabs');
+  box.innerHTML = '';
+  const items = [{ view: 'all', text: 'All' },
+    ...sides.map((s) => ({ view: String(s.col), text: s.name })),
+    { view: 'split', text: 'Each side' }];
+  for (const it of items) {
+    const b = document.createElement('button');
+    b.dataset.view = it.view;
+    b.textContent = it.text;
+    b.classList.toggle('active', it.view === chartView);
+    b.addEventListener('click', () => {
+      chartView = it.view;
+      box.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+      updateExport();
+      loadChart();
+    });
+    box.appendChild(b);
+  }
+  box.hidden = !sidesOn();
 }
 
 async function loadChart() {
@@ -458,22 +509,34 @@ async function loadChart() {
   }
   if (range !== chartRange) return; // user switched while loading
 
-  const series = seriesFor(chartKind);
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const grid = dark ? '#374151' : '#e5e7eb';
+  const tick = dark ? '#9ca3af' : '#6b7280';
+  const outsideColor = dark ? '#f9fafb' : '#111827';
   const axisTitle = { temps: '°F', humidity: '% humidity', co2: 'CO₂ (ppm)', tanks: '% full' }[chartKind];
-  const datasets = series.map((s, i) => ({
-    label: s.label,
-    data: (data.series[s.id] || []).map(([x, y]) => ({ x, y })),
-    borderColor: PALETTE[i % PALETTE.length],
-    backgroundColor: PALETTE[i % PALETTE.length],
-    borderWidth: 2, pointRadius: 0, tension: 0.2,
-  }));
+
+  const panels = chartPanels().map((p) => ({
+    title: p.title,
+    datasets: seriesFor(chartKind, p.col).map((s) => ({
+      label: s.label,
+      outside: !!s.outside,
+      data: (data.series[s.id] || []).map(([x, y]) => ({ x, y })),
+      hidden: hiddenLabels.has(s.label),
+      // Outside is a dashed neutral line so it reads as a reference, not as another room.
+      borderColor: s.outside ? outsideColor : s.color,
+      backgroundColor: s.outside ? 'transparent' : s.color,
+      borderDash: s.outside ? [6, 4] : [],
+      borderWidth: 2, pointRadius: 0, tension: 0.2,
+    })),
+  })).filter((p) => p.title === null || p.datasets.some((d) => !d.outside));
 
   const min = data.start;
   const max = data.end;
   const span = max - min;
 
   // Tell the viewer when the data doesn't cover the whole range.
-  const firsts = datasets.map((d) => d.data[0] && d.data[0].x).filter(Boolean);
+  const all = panels.flatMap((p) => p.datasets);
+  const firsts = all.filter((d) => !d.outside).map((d) => d.data[0] && d.data[0].x).filter(Boolean);
   const msgs = [];
   if (!firsts.length) {
     msgs.push(range === '30d' || range === 'all'
@@ -482,57 +545,102 @@ async function loadChart() {
   } else if (range !== 'all' && Math.min(...firsts) - min > 0.1 * span) {
     msgs.push(`Data starts ${new Date(Math.min(...firsts)).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}.`);
   }
+  if (firsts.length && all.some((d) => d.outside && !d.data.length)) msgs.push('No outside readings for this period yet.');
   if (data.source === 'stats') msgs.push(range === 'all' ? 'Daily averages.' : 'Hourly averages.');
   $('chart-msg').textContent = msgs.join(' ');
 
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-  const grid = dark ? '#374151' : '#e5e7eb';
-  const tick = dark ? '#9ca3af' : '#6b7280';
-  const ticks = makeTicks(min, max);
+  // Humidity and tanks are always 0–100. With one chart per side, the charts share one
+  // scale so the sides can be compared at a glance.
+  let yRange = {};
+  if (chartKind === 'humidity' || chartKind === 'tanks') {
+    yRange = { min: 0, max: 100 };
+  } else if (panels.length > 1) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const d of all) for (const pt of d.data) { if (pt.y < lo) lo = pt.y; if (pt.y > hi) hi = pt.y; }
+    if (lo <= hi) {
+      // Round out to multiples of 5 so every chart gets the same clean tick marks.
+      yRange = { min: Math.floor((lo - 1) / 5) * 5, max: Math.ceil((hi + 1) / 5) * 5 };
+    }
+  }
 
-  if (chart) chart.destroy();
-  chart = new Chart($('chart'), {
-    type: 'line',
-    data: { datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
-      interaction: { mode: 'nearest', axis: 'x', intersect: false },
-      scales: {
-        x: {
-          type: 'linear', min, max, grid: { color: grid },
-          afterBuildTicks: (axis) => { axis.ticks = ticks.map((value) => ({ value })); },
-          ticks: { color: tick, autoSkip: true, maxRotation: 0, callback: (v) => tickLabel(v, span) },
+  const ticks = makeTicks(min, max);
+  for (const c of charts) c.destroy();
+  charts = [];
+  const wrap = $('charts');
+  wrap.innerHTML = '';
+  wrap.classList.toggle('split', panels.length > 1);
+
+  for (const p of panels) {
+    const panel = document.createElement('div');
+    panel.className = 'chart-panel';
+    if (p.title) {
+      const h = document.createElement('h3');
+      h.textContent = p.title;
+      panel.appendChild(h);
+    }
+    const box = document.createElement('div');
+    box.className = 'chart-wrap';
+    const canvas = document.createElement('canvas');
+    box.appendChild(canvas);
+    panel.appendChild(box);
+    wrap.appendChild(panel);
+
+    charts.push(new Chart(canvas, {
+      type: 'line',
+      data: { datasets: p.datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        scales: {
+          x: {
+            type: 'linear', min, max, grid: { color: grid },
+            afterBuildTicks: (axis) => { axis.ticks = ticks.map((value) => ({ value })); },
+            ticks: { color: tick, autoSkip: true, maxRotation: 0, callback: (v) => tickLabel(v, span) },
+          },
+          y: {
+            grid: { color: grid }, ticks: { color: tick },
+            title: { display: true, text: axisTitle, color: tick },
+            ...yRange,
+          },
         },
-        y: {
-          grid: { color: grid }, ticks: { color: tick },
-          title: { display: true, text: axisTitle, color: tick },
-          ...(chartKind === 'humidity' || chartKind === 'tanks' ? { min: 0, max: 100 } : {}),
-        },
-      },
-      plugins: {
-        legend: { labels: { color: tick, boxWidth: 12 } },
-        tooltip: {
-          callbacks: {
-            title: (items) => new Date(items[0].parsed.x).toLocaleString([], span > 45 * DAY
-              ? { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }
-              : { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
-            label: (item) => `${item.dataset.label}: ${Math.round(item.parsed.y * 10) / 10}`,
+        plugins: {
+          legend: {
+            labels: { color: tick, boxWidth: 12 },
+            // Default toggle, plus remember the choice for the next refresh and the other views.
+            onClick: (e, item, legend) => {
+              Chart.defaults.plugins.legend.onClick(e, item, legend);
+              const label = legend.chart.data.datasets[item.datasetIndex].label;
+              if (legend.chart.isDatasetVisible(item.datasetIndex)) hiddenLabels.delete(label);
+              else hiddenLabels.add(label);
+            },
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => new Date(items[0].parsed.x).toLocaleString([], span > 45 * DAY
+                ? { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }
+                : { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
+              label: (item) => `${item.dataset.label}: ${Math.round(item.parsed.y * 10) / 10}`,
+            },
           },
         },
       },
-    },
-  });
+    }));
+  }
 }
 
 // ---------- CSV of the chart (v1.4) ----------
 // The server builds it from the same data as the chart: one column per line.
 // On Temperature and Humidity, a checkbox adds the other one (one tick carries across both tabs).
+// v1.6: when one side is selected, the CSV has that side's sections only.
 function updateExport() {
   const canCombine = chartKind === 'temps' || chartKind === 'humidity';
   $('combine-wrap').hidden = !canCombine;
   $('combine-text').textContent = chartKind === 'temps' ? 'Include humidity' : 'Include temperature';
   const combine = canCombine && $('combine').checked ? '&combine=1' : '';
-  $('dl-csv').href = `api/export.csv?range=${chartRange}&kind=${chartKind}${combine}`;
+  const view = activeView();
+  const side = /^[0-2]$/.test(view) ? `&side=${view}` : '';
+  $('dl-csv').href = `api/export.csv?range=${chartRange}&kind=${chartKind}${combine}${side}`;
 }
 
 // ---------- Pages ----------
@@ -561,6 +669,7 @@ async function init() {
   buildHouse();
   buildTanks();
   buildOptional();
+  buildSideTabs();
   $('tank-note').textContent = `Tanks turn red at ${config.tank_alert_threshold}% full.`;
   connectStream();
   showPage();
@@ -571,6 +680,7 @@ async function init() {
   document.querySelectorAll('#kind-tabs button').forEach((b) => b.addEventListener('click', () => {
     document.querySelectorAll('#kind-tabs button').forEach((x) => x.classList.toggle('active', x === b));
     chartKind = b.dataset.kind;
+    $('side-tabs').hidden = !sidesOn();
     updateExport();
     loadChart();
   }));

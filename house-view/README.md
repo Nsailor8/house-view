@@ -45,6 +45,7 @@ Each of these stays hidden on the page until you fill it in on the Configuration
 | Option | What to enter | What appears |
 | --- | --- | --- |
 | `weather` | Your weather entity, e.g. `weather.forecast_home` | Current weather, a 5-day forecast, and a red "empty the tanks" banner when rain chance in the next 2 days is at least `rain_alert_chance` and a tank is above `tank_alert_threshold` |
+| `outdoor_temperature` / `outdoor_humidity` | `sensor.*` entities for the outside temperature (°F) and humidity (%) | A dashed **Outside** line on the Temperature and Humidity charts, and an Outside column in the CSV (v1.6) |
 | `climate` | A name plus a `climate.*` entity per A/C or thermostat | Current temperature, mode and set point (read-only) |
 | `co2` / `pm25` on a section | The air monitor's CO₂ and PM2.5 entity IDs | Coloured air-quality readings on that room, plus a CO₂ history tab |
 | `network` | Topology nodes (see below) | House map of Decos on Network, Deco list with MAC/IP, Internet + Decos online on Overview |
@@ -90,6 +91,18 @@ A **Download CSV** button under the chart on the Data page saves exactly what th
 
 On the Temperature and Humidity tabs, an **Include humidity** / **Include temperature** checkbox next to the button adds the other reading, side by side per section (`Section 1 Temperature (°F)`, `Section 1 Humidity (%)`, …). It works for every range and adds `&combine=1` to the URL.
 
-If a sensor sent nothing during a step, its last value carries over. Times are local, in Home Assistant's time zone. The URL is `/api/export.csv?range=24h|7d|30d|all&kind=temps|humidity|co2|tanks`, so it also works in Excel's Data › Get Data › From Web.
+If a sensor sent nothing during a step, its last value carries over. Times are local, in Home Assistant's time zone. The URL is `/api/export.csv?range=24h|7d|30d|all&kind=temps|humidity|co2|tanks[&combine=1][&side=0|1|2]`, so it also works in Excel's Data › Get Data › From Web.
 
 v1.4 also fixes the 7-day chart: HA's history API returns only one day unless `end_time` is passed.
+
+## Sides and the outside line (v1.6)
+
+**Sides.** `columns` names the three columns of the house diagram, left to right (column 0, 1, 2). The defaults are `David's side` (sections 7–9), `Tiny home` (4–6) and `JP's side` (1–3). On the Data page a third row of buttons appears on the Temperature, Humidity and CO₂ tabs:
+
+- **All**: one chart with every section (as before).
+- **A side's name**: one chart with only that side's sections. Download CSV then has only those sections (`&side=0|1|2`) and the side's name in the file name.
+- **Each side**: one chart per side, stacked, on the same scale so the sides can be compared. Download CSV has every section.
+
+A section keeps the same colour in every view. Clicking a name in a chart's legend hides that line, and it stays hidden across the views and the 5-minute refresh until it's clicked again or the page is reloaded. Set a column's name to `""` to leave it out of the filter; with fewer than two named columns the row is hidden.
+
+**Outside.** `outdoor_temperature` and `outdoor_humidity` add a dashed, neutral **Outside** line to the Temperature and Humidity charts in every view, and an `Outside (°F)` / `Outside (%)` column at the end of the CSV. They must be `sensor.*` entities, because the charts read HA's history and long-term statistics of an entity's state; a `weather.*` entity keeps its temperature in an attribute, which has neither. Use a real outdoor sensor, or a template sensor that copies the weather entity's `temperature` / `humidity` attribute (state class `measurement`, so the 30-day and All-time ranges work). The line starts when the sensor starts recording; until then the chart says "No outside readings for this period yet."

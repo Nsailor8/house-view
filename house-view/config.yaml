@@ -1,10 +1,10 @@
 # Home Assistant add-on definition for the House View page.
 # Edit entity IDs and names in the add-on's Configuration tab after installing;
 # the values below are only the starting defaults.
-# Every optional block (weather, climate, air quality, network) stays hidden
+# Every optional block (weather, outside sensors, climate, air quality, network) stays hidden
 # on the page until you fill it in.
 name: House View
-version: "1.5.0"
+version: "1.6.0"
 slug: house_view
 description: Simple read-only house dashboard for non-technical viewers
 arch:
@@ -29,11 +29,22 @@ options:
   rain_alert_chance: 70
   # NWS radar site for the radar loop on the Weather page (e.g. KCLX). Leave empty to hide.
   radar_station: ""
+  # Outside readings drawn as a dashed "Outside" line on the Temperature and Humidity
+  # charts. These must be sensor.* entities (°F and %) with their own history, not a
+  # weather.* entity. Leave empty to hide.
+  outdoor_temperature: ""
+  outdoor_humidity: ""
   # Listed top to bottom. Sections refer to these by position (0 = first).
   floors:
     - "2nd floor"
     - "Main floor"
     - "Basement"
+  # The three columns of the house, left to right (column 0, 1, 2). Used as the side
+  # filter on the Data page. Leave a name empty ("") to leave that column out of the filter.
+  columns:
+    - "David's side"
+    - "Tiny home"
+    - "JP's side"
   # Layout matches the sketch: left column 7/8/9, middle 4/5/6, right 1/2/3.
   # Optional per section: co2 and pm25 entity IDs for air quality.
   sections:
@@ -67,7 +78,11 @@ schema:
   weather: str?
   rain_alert_chance: "int(0,100)"
   radar_station: str?
+  outdoor_temperature: str?
+  outdoor_humidity: str?
   floors:
+    - str
+  columns:
     - str
   sections:
     - number: int
