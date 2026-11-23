@@ -7,4 +7,6 @@ COPY public ./public
 
 ENV NODE_ENV=production
 EXPOSE 8099
-CMD ["node", "server.js"]
+# Bypass the node image's docker-entrypoint.sh (on some HAOS hosts it fails with
+# "exec format error" and the container exits in under a second).
+ENTRYPOINT ["node", "server.js"]

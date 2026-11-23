@@ -4,7 +4,7 @@
 # Every optional block (weather, climate, air quality, network) stays hidden
 # on the page until you fill it in.
 name: House View
-version: "1.5.0"
+version: "1.5.1"
 slug: house_view
 description: Simple read-only house dashboard for non-technical viewers
 arch:
